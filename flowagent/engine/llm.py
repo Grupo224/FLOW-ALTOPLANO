@@ -176,7 +176,9 @@ class UnifiedClient:
                 "Settings.".format(self.provider)
             )
 
-    def messages_create(self, *, model, messages, system=None, tools=None,
+        self.messages = self
+
+    def create(self, *, model, messages, system=None, tools=None,
                         max_tokens=1024, temperature=None):
         if self.provider == "Anthropic":
             return self._anthropic(model, messages, system, tools, max_tokens, temperature)
@@ -380,7 +382,7 @@ def test_connection(provider: str, model: str | None = None) -> dict:
     """Fire a tiny completion to verify credentials/connectivity."""
     client = UnifiedClient(provider)
     model = model or get_default_model(provider)
-    resp = client.messages_create(
+    resp = client.messages.create(
         model=model,
         messages=[{"role": "user", "content": "Reply with exactly: OK"}],
         max_tokens=8,
