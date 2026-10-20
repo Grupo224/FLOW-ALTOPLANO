@@ -155,7 +155,7 @@ def _maybe_snapshot_version(wf):
         "trigger_type": wf.trigger_type,
         "trigger_doctype": wf.trigger_doctype,
         "trigger_event": wf.trigger_event,
-        "cron": wf.cron,
+        "cron": wf.trigger_cron,
     }, sort_keys=True)
     digest = hashlib.sha1(payload.encode()).hexdigest()
 
@@ -186,7 +186,7 @@ def _maybe_snapshot_version(wf):
             "type": wf.trigger_type,
             "doctype": wf.trigger_doctype,
             "event": wf.trigger_event,
-            "cron": wf.cron,
+            "cron": wf.trigger_cron,
         })
         ver.viewport_json = wf.viewport_json or "{}"
         ver.insert(ignore_permissions=True)

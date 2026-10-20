@@ -712,7 +712,7 @@ def restore_version(version: str):
         wf.trigger_type = trig.get("type")
         wf.trigger_doctype = trig.get("doctype") or ""
         wf.trigger_event = trig.get("event") or ""
-        wf.cron = trig.get("cron") or ""
+        wf.trigger_cron = trig.get("cron") or ""
     wf.save()
     return {"restored": True, "workflow": wf.name}
 
