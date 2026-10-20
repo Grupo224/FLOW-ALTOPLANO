@@ -588,23 +588,7 @@ def _design(goal: str, iteration: int, prior_workflow: dict | None,
     is in flight (not that the loop is stuck).
     """
     from .ai_build import SYSTEM_PROMPT, VALID_NODE_TYPES, _strip_fences
-    from ..flowagent_core.doctype.flowagent_settings.flowagent_settings import (
-        get_anthropic_key, get_default_model,
-    )
-    try:
-        from anthropic import Anthropic
-    except ImportError:
-        raise RuntimeError(
-            "The `anthropic` Python package is not installed on this bench. "
-            "Run: bench pip install anthropic  — then bench restart."
-        )
-
-    key = get_anthropic_key()
-    if not key:
-        raise RuntimeError(
-            "Anthropic API key is not set. Open FlowAgent Settings, "
-            "paste your key, save, then run the Engineer again."
-        )
+    from flowagent.engine.llm import UnifiedClient, get_default_model
 
     model = get_default_model() or "claude-sonnet-4-5"
     if job_id:
@@ -684,7 +668,7 @@ def _design(goal: str, iteration: int, prior_workflow: dict | None,
     # 180 seconds is plenty for even a slow, big-context response;
     # anything longer than that is almost certainly a stuck connection
     # and we're better off failing loudly.
-    client = Anthropic(api_key=key, timeout=180.0)
+    client = UnifiedClient()
 
     if job_id:
         _append_log(
@@ -976,21 +960,9 @@ def _analyze(goal: str, workflow: dict, run_summary: dict) -> dict:
             "reasoning": "Run terminated with a failure status.",
         }
 
-    from ..flowagent_core.doctype.flowagent_settings.flowagent_settings import (
-        get_anthropic_key, get_default_model,
-    )
-    try:
-        from anthropic import Anthropic
-    except ImportError:
-        # Fallback: without Claude, if it didn't fail, treat as success.
-        return {"success": True, "issue": "",
-                "reasoning": "Run completed successfully (Anthropic unavailable for deeper analysis)."}
+    from flowagent.engine.llm import UnifiedClient, get_default_model
 
-    key = get_anthropic_key()
-    if not key:
-        return {"success": True, "issue": "", "reasoning": "Run completed successfully."}
-
-    client = Anthropic(api_key=key)
+    client = UnifiedClient()
     prompt = (
         "You are evaluating whether a workflow run achieved the user's goal.\n\n"
         f"USER GOAL: {goal}\n\n"

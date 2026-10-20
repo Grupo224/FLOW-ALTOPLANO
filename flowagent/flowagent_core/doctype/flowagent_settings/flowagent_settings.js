@@ -21,4 +21,21 @@ frappe.ui.form.on('FlowAgent Settings', {
             }
         );
     },
+
+    test_provider_connection(frm) {
+        const provider = frm.doc.default_provider || 'Anthropic';
+        frappe.call({
+            method: 'flowagent.flowagent_core.doctype.flowagent_settings.flowagent_settings.test_provider_connection',
+            args: { provider },
+            freeze: true,
+            callback(r) {
+                if (r.message && r.message.success) {
+                    frappe.show_alert({ message: 'Connection OK: ' + r.message.model, indicator: 'green' });
+                } else {
+                    const err = (r.message && r.message.error) || 'Connection failed';
+                    frappe.show_alert({ message: err, indicator: 'red' });
+                }
+            },
+        });
+    },
 });

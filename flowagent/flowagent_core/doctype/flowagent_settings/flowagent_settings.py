@@ -3,6 +3,8 @@
 
 import frappe
 from frappe.model.document import Document
+import json
+
 
 
 class FlowAgentSettings(Document):
@@ -25,6 +27,38 @@ def regenerate_webhook_secret():
     settings.webhook_secret = frappe.generate_hash(length=32)
     settings.save(ignore_permissions=True)
     return settings.webhook_secret
+
+
+
+@frappe.whitelist()
+def get_providers():
+    """List configured providers with masked keys (never the real key)."""
+    frappe.only_for("System Manager")
+    settings = frappe.get_single("FlowAgent Settings")
+    out = []
+    for row in settings.providers or []:
+        out.append({
+            "provider": row.provider,
+            "label": row.label or row.provider,
+            "enabled": bool(row.enabled),
+            "default_model": row.default_model or "",
+            "base_url": row.base_url or "",
+            "has_key": bool(row.get_password("api_key", raise_exception=False)),
+        })
+    out.append({"provider": "default_provider", "value": settings.default_provider or "Anthropic"})
+    return out
+
+
+@frappe.whitelist()
+def test_provider_connection(provider, model=None):
+    """Verify credentials/connectivity for a provider. Never returns the key."""
+    frappe.only_for("System Manager")
+    from flowagent.engine.llm import test_connection
+    try:
+        return test_connection(provider, model)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "FlowAgent Provider Test")
+        return {"success": False, "error": str(e)}
 
 
 def get_anthropic_key() -> str:

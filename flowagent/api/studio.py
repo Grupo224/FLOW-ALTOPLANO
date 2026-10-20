@@ -599,12 +599,17 @@ def diagnose(workflow: str | None = None):
     except Exception:
         pass  # not all Frappe versions expose this
 
-    # 5. Anthropic key set?
+    # 5. LLM provider key set?
     settings = frappe.get_single("FlowAgent Settings")
     has_key = bool(settings.get_password("anthropic_api_key", raise_exception=False))
     if not has_key:
         has_key = bool(frappe.conf.get("anthropic_api_key"))
-    check("Anthropic API key configured", has_key,
+    if not has_key:
+        for row in settings.providers or []:
+            if row.get_password("api_key", raise_exception=False):
+                has_key = True
+                break
+    check("LLM API key configured", has_key,
           "Set the key in FlowAgent Settings if you plan to use AI nodes."
           if not has_key else "")
 

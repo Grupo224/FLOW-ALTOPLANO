@@ -124,7 +124,7 @@ USER'S REQUESTED CHANGE:"""
 
 
 @frappe.whitelist()
-def build_from_prompt(prompt: str, model: str | None = None,
+def build_from_prompt(prompt: str, model: str | None = None, provider: str | None = None,
                       mode: str = "create", current_workflow: str | None = None):
     """Convert a NL workflow description into a graph JSON.
 
@@ -141,17 +141,9 @@ def build_from_prompt(prompt: str, model: str | None = None,
     ):
         frappe.throw("Not permitted", frappe.PermissionError)
 
-    from ..flowagent_core.doctype.flowagent_settings.flowagent_settings import (
-        get_anthropic_key, get_default_model,
-    )
-    try:
-        from anthropic import Anthropic
-    except ImportError:
-        frappe.throw("Install the anthropic package: pip install anthropic")
+    from flowagent.engine.llm import UnifiedClient, get_default_model
 
-    key = get_anthropic_key()
-    if not key:
-        frappe.throw("Set the Anthropic API key in FlowAgent Settings before using AI Build")
+    client = UnifiedClient(provider)
 
     # Compose the system prompt — base + (optional) modify addendum carrying
     # the current workflow.
@@ -175,9 +167,8 @@ def build_from_prompt(prompt: str, model: str | None = None,
             current_workflow_json=json.dumps(trimmed, indent=2)
         )
 
-    client = Anthropic(api_key=key)
     response = client.messages.create(
-        model=model or get_default_model(),
+        model=model or get_default_model(provider),
         max_tokens=4000,  # modify mode returns the whole graph, so give it room
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],

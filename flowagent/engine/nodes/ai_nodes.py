@@ -31,35 +31,21 @@ from . import BaseExecutor, node
 # -------------------------------------------------------------------------
 # Anthropic client helper
 # -------------------------------------------------------------------------
-def _client():
-    from flowagent.flowagent_core.doctype.flowagent_settings.flowagent_settings import (
-        get_anthropic_key,
-    )
-    try:
-        from anthropic import Anthropic
-    except ImportError:
-        frappe.throw(
-            "The 'anthropic' Python package is not installed. "
-            "Run: pip install anthropic"
-        )
-    key = get_anthropic_key()
-    if not key:
-        frappe.throw(
-            "No Anthropic API key configured. Set it in FlowAgent Settings, "
-            "or via site_config 'anthropic_api_key', or env ANTHROPIC_API_KEY."
-        )
-    # EXPLICIT TIMEOUT — without this, any node making an AI call can hang
-    # the whole worker indefinitely if the API stalls (firewall, proxy,
-    # rate limiting). 90s is generous for a single completion but keeps
-    # the worst-case bounded.
-    return Anthropic(api_key=key, timeout=90.0)
+def _client(cfg=None):
+    """Return a provider-aware UnifiedClient.
+
+    Provider is resolved from the node's cfg['provider'], falling back to
+    the Settings default provider.
+    """
+    from flowagent.engine.llm import UnifiedClient
+    provider = (cfg or {}).get("provider")
+    return UnifiedClient(provider)
 
 
 def _model(cfg: dict) -> str:
-    from flowagent.flowagent_core.doctype.flowagent_settings.flowagent_settings import (
-        get_default_model,
-    )
-    return cfg.get("model") or get_default_model()
+    from flowagent.engine.llm import get_default_model
+    provider = (cfg or {}).get("provider")
+    return (cfg or {}).get("model") or get_default_model(provider)
 
 
 def _extract_text(response) -> str:
@@ -153,7 +139,7 @@ class LLMPromptNode(BaseExecutor):
             prompt_preview = (cfg.get("prompt", "") or "")[:120]
             return f"[dry-run ai_llm stub — prompt: {prompt_preview}…]"
 
-        client = _client()
+        client = _client(cfg)()
         model = _model(cfg)
         kwargs = {
             "model": model,
@@ -199,7 +185,7 @@ class ExtractNode(BaseExecutor):
         if getattr(runner, "dry_run", False):
             return {k: f"[dry-run stub for {k}]" for k in schema.keys()}
 
-        client = _client()
+        client = _client(cfg)()
         field_lines = "\n".join(f"  - {k}: {desc}" for k, desc in schema.items())
         prompt = (
             "Extract the following fields from the source text. "
@@ -268,7 +254,7 @@ class ClassifyNode(BaseExecutor):
             f"Input:\n{text}\n\n"
             "Reply with ONLY the chosen category label, nothing else."
         )
-        client = _client()
+        client = _client(cfg)()
         model = _model(cfg)
         response = client.messages.create(
             model=model,
@@ -304,7 +290,7 @@ class SentimentNode(BaseExecutor):
         if getattr(runner, "dry_run", False):
             return {"sentiment": "neutral", "score": 0.0, "_dry_run": True}
 
-        client = _client()
+        client = _client(cfg)()
         model = _model(cfg)
         response = client.messages.create(
             model=model,
@@ -350,7 +336,7 @@ class VisionNode(BaseExecutor):
 
         image_block = self._build_image_block(file_url)
 
-        client = _client()
+        client = _client(cfg)()
         model = _model(cfg)
         response = client.messages.create(
             model=model,
@@ -445,7 +431,7 @@ class AgentNode(BaseExecutor):
                 "allowed_doctypes": allowed,
             }
 
-        client = _client()
+        client = _client(cfg)()
         settings = runner.settings
         max_iters = int(cfg.get("max_iters") or settings.max_agent_iterations or 8)
 
