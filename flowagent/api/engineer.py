@@ -45,7 +45,7 @@ def _job_key(job_id: str) -> str:
 
 
 def _get_job(job_id: str) -> dict | None:
-    raw = frappe.cache().get_value(_job_key(job_id))
+    raw = frappe.cache().get_value(_job_key(job_id), expires=True)
     if not raw:
         return None
     if isinstance(raw, (bytes, bytearray)):
@@ -844,10 +844,53 @@ def _test(workflow_name: str, test_payload: dict, test_mode: str,
     exec_timeout_sec = 120 if test_mode == "dry_run" else 600
     exec_t0 = time.monotonic()
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fa-engineer-test")
-    try:
-        future = executor.submit(runner.execute)
+
+    # A raw worker thread has no frappe context (frappe.local is
+    # thread-local), so frappe.get_doc etc. inside the runner would raise
+    # AttributeError (e.g. dev_server). Initialise frappe inside the thread
+    # before running the workflow.
+    site = frappe.local.site
+    sites_path = frappe.local.sites_path
+
+    def _run_in_thread():
+        frappe.init(site=site, sites_path=sites_path)
+        frappe.connect()
+        frappe.set_user(user)
+        run_name = runner.execute()
+        # Build the summary from the in-memory run doc *on this thread*.
+        # Reading it back on the caller thread fails: the run doc is
+        # committed on this thread's DB connection, and the caller's
+        # connection (still in its own transaction) can't see it yet.
+        steps = []
+        for s in runner.steps:
+            steps.append({
+                "index": s["step_index"],
+                "node_id": s["node_id"],
+                "node_type": s["node_type"],
+                "node_label": s["node_label"],
+                "status": s["status"],
+                "duration_ms": s["duration_ms"],
+                "error": (s["error"] or "")[:400],
+                "output": (s["output_snapshot"] or "")[:400],
+            })
+        run_doc = runner.run_doc
         try:
-            run_name = future.result(timeout=exec_timeout_sec)
+            final_ctx = json.loads(run_doc.final_context or "{}")
+        except Exception:
+            final_ctx = {}
+        return {
+            "name": run_name,
+            "status": run_doc.status,
+            "duration_ms": run_doc.duration_ms,
+            "error_message": run_doc.error_message,
+            "final_context": final_ctx,
+            "steps": steps,
+        }
+
+    try:
+        future = executor.submit(_run_in_thread)
+        try:
+            summary = future.result(timeout=exec_timeout_sec)
         except FutureTimeoutError:
             exec_ms = int((time.monotonic() - exec_t0) * 1000)
             if job_id:
@@ -890,44 +933,15 @@ def _test(workflow_name: str, test_payload: dict, test_mode: str,
 
     if job_id:
         _append_log(job_id,
-                    f"     • execute() returned in {exec_ms}ms  •  run={run_name}",
+                    f"     • execute() returned in {exec_ms}ms  •  run={summary.get('name')}",
                     "info")
 
-    # Load back the persisted run
-    try:
-        run_doc = frappe.get_doc("FlowAgent Workflow Run", run_name)
-    except Exception as e:
-        if job_id:
-            _append_log(job_id, f"     ✗ Failed to load run doc {run_name}: {e}", "error")
-        return {"status": "Failed",
-                "error_message": f"Could not load run doc: {e}",
-                "steps": []}
-
-    steps = []
-    for s in (run_doc.steps or []):
-        steps.append({
-            "index": s.step_index,
-            "node_id": s.node_id,
-            "node_type": s.node_type,
-            "node_label": s.node_label,
-            "status": s.status,
-            "duration_ms": s.duration_ms,
-            "error": (s.error or "")[:400],
-            "output": (s.output_snapshot or "")[:400],
-        })
-    try:
-        final_ctx = json.loads(run_doc.final_context or "{}")
-    except Exception:
-        final_ctx = {}
-
-    return {
-        "name": run_name,
-        "status": run_doc.status,
-        "duration_ms": run_doc.duration_ms,
-        "error_message": run_doc.error_message,
-        "final_context": final_ctx,
-        "steps": steps,
-    }
+    # The summary was built inside the worker thread (see _run_in_thread)
+    # from the in-memory run doc. We deliberately do NOT read the run doc
+    # back here: it was committed on the thread's own DB connection, and
+    # this caller thread's connection (still in its own transaction) may
+    # not see it until it commits/rolls back.
+    return summary
 
 
 def _summarize_run_for_feedback(run_summary: dict) -> dict:
