@@ -31,7 +31,7 @@ class ConditionNode(BaseExecutor):
         try:
             result = _safe_eval(expr, context.data)
         except Exception as e:
-            frappe.throw(f"Condition error: {e}")
+            frappe.throw(f"Condition error: {e} (expression: {expr!r})")
         port = "out-yes" if result else "out-no"
         return (port, bool(result))
 
@@ -123,6 +123,34 @@ class ParallelNode(BaseExecutor):
 # -------------------------------------------------------------------------
 # Safe expression evaluator
 # -------------------------------------------------------------------------
+def _normalize_condition(expr: str) -> str:
+    """Tolerate common LLM / Jinja-isms in condition expressions.
+
+    The Engineer model frequently emits Jinja syntax ({{ var }}, the
+    | length filter) instead of plain Python. Normalise those before
+    we hand the expression to ast.parse, so conditions don't blow up
+    with 'invalid syntax'.
+    """
+    import re
+
+    expr = (expr or "").strip()
+
+    # Whole-expression wrap:  {{ ... }}  ->  ...
+    while expr.startswith("{{") and expr.endswith("}}"):
+        expr = expr[2:-2].strip()
+
+    # Inline variable refs:  {{ foo.bar }}  ->  foo.bar
+    expr = re.sub(r"\{\{\s*(.*?)\s*\}\}", r"\1", expr)
+
+    # Jinja | length filter:  X | length  ->  len(X)
+    expr = re.sub(r"([\w\.]+)\s*\|\s*length\b", r"len(\1)", expr)
+
+    # Single '=' as equality (leave <=, >=, !=, == untouched)
+    expr = re.sub(r"(?<![<>=!])=(?!=)", "==", expr)
+
+    return expr
+
+
 def _safe_eval(expr: str, data: dict):
     """Evaluate a comparison/boolean expression against the context.
 
@@ -139,8 +167,11 @@ def _safe_eval(expr: str, data: dict):
     """
     import ast
 
+    # Tolerate LLM / Jinja-isms ({{ var }}, | length, '=' for equality)
+    expr_py = _normalize_condition(expr)
+
     # Normalise word literals to Python syntax
-    expr_py = expr.replace("&&", " and ").replace("||", " or ")
+    expr_py = expr_py.replace("&&", " and ").replace("||", " or ")
     expr_py = _replace_word(expr_py, "true", "True")
     expr_py = _replace_word(expr_py, "false", "False")
     expr_py = _replace_word(expr_py, "null", "None")
@@ -192,6 +223,24 @@ def _safe_eval(expr: str, data: dict):
             return [_ev(e) for e in node.elts]
         if isinstance(node, ast.Tuple):
             return tuple(_ev(e) for e in node.elts)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == "len":
+                if len(node.args) != 1:
+                    raise ValueError("len() expects exactly 1 argument")
+                try:
+                    return len(_ev(node.args[0]))
+                except TypeError:
+                    return 0
+            if isinstance(node.func, ast.Name) and node.func.id in ("int", "float", "str", "bool"):
+                if len(node.args) != 1:
+                    raise ValueError("call expects exactly 1 argument")
+                val = _ev(node.args[0])
+                fn = {"int": int, "float": float, "str": str, "bool": bool}[node.func.id]
+                try:
+                    return fn(val)
+                except (TypeError, ValueError):
+                    return val
+            raise ValueError("Unsupported call: " + getattr(node.func, "id", repr(node.func)) + "()")
         raise ValueError(f"Unsupported expression node: {type(node).__name__}")
 
     return _ev(tree)
