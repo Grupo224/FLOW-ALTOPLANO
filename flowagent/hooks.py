@@ -11,6 +11,19 @@ app_email = "hello@flowagent.dev"
 app_license = "MIT"
 required_apps = []
 
+
+# Apps screen
+# ----------------------------------------------------------------------
+# Shown as a card in the desk app switcher (the grid behind the logo).
+add_to_apps_screen = [
+	{
+		"name": "flowagent",
+		"logo": "/assets/flowagent/flowagent-logo.svg",
+		"title": "FlowAgent",
+		"route": "/app/flowagent",
+	}
+]
+
 # Includes
 # ----------------------------------------------------------------------
 # Bundled assets for the Studio page and Desk integrations.
