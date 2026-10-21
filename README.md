@@ -36,7 +36,7 @@ El motor de LLM (`flowagent/engine/llm.py`) expone un `UnifiedClient` con la mis
 
 ```bash
 cd ~/frappe-bench
-bench get-app git@github.com:Grupo224/flowagent.git --branch feat/multiprovider
+bench get-app git@github.com:Grupo224/FLOW-ALTOPLANO.git --branch feat/multiprovider
 bench --site <sitio> install-app flowagent
 bench --site <sitio> migrate
 ```
