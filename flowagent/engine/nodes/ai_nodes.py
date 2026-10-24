@@ -57,7 +57,8 @@ def _extract_text(response) -> str:
     return "".join(parts).strip()
 
 
-# Approximate per-million-token prices for the standard Anthropic models.
+# Approximate per-million-token prices for the standard Anthropic models
+# (see _OPENAI_COMPAT_PRICES below for OpenAI/DeepSeek/OpenRouter models).
 # We store these client-side too so they update without a release, but
 # this is a safe fallback. Prices are in USD per million tokens.
 _MODEL_PRICES = {
@@ -72,6 +73,36 @@ _MODEL_PRICES = {
     "claude-haiku-4-5":        {"in": 1.0,  "out": 5.0},
     "claude-haiku-3-5":        {"in": 0.8,  "out": 4.0},
 }
+
+
+_OPENAI_COMPAT_PRICES = {
+    # OpenAI (USD per 1M tokens)
+    "gpt-4o":                 {"in": 2.5,  "out": 10.0},
+    "gpt-4o-mini":            {"in": 0.15, "out": 0.6},
+    "gpt-4.1":                {"in": 2.0,  "out": 8.0},
+    "gpt-4.1-mini":           {"in": 0.40, "out": 1.6},
+    "gpt-4.1-nano":           {"in": 0.10, "out": 0.4},
+    "o3":                     {"in": 2.0,  "out": 8.0},
+    "o4-mini":                {"in": 1.1,  "out": 4.4},
+    "o3-mini":                {"in": 1.1,  "out": 4.4},
+    "gpt-3.5-turbo":          {"in": 0.5,  "out": 1.5},
+    # DeepSeek (USD per 1M tokens)
+    "deepseek-chat":          {"in": 0.27, "out": 1.10},
+    "deepseek-reasoner":      {"in": 0.55, "out": 2.19},
+}
+
+
+def _normalize_model_name(model: str) -> str:
+    """Strip an OpenRouter-style 'vendor/model' prefix so pricing lookup
+    works regardless of provider (e.g. 'openai/gpt-4o' -> 'gpt-4o')."""
+    if not model:
+        return model
+    model = str(model).strip()
+    if "/" in model and not model.startswith("http"):
+        parts = model.split("/")
+        if len(parts) >= 2 and parts[0]:
+            return parts[-1]
+    return model
 
 
 def _record_usage(runner, model: str, response) -> None:
@@ -95,11 +126,13 @@ def _record_usage(runner, model: str, response) -> None:
     # Estimate cost using whatever prefix of the model name we match
     # (Anthropic appends date suffixes that change over time).
     price = None
-    if model in _MODEL_PRICES:
-        price = _MODEL_PRICES[model]
+    model_key = _normalize_model_name(model)
+    prices = {**_MODEL_PRICES, **_OPENAI_COMPAT_PRICES}
+    if model_key in prices:
+        price = prices[model_key]
     else:
-        for k, p in _MODEL_PRICES.items():
-            if model.startswith(k):
+        for k, p in sorted(prices.items(), key=lambda kv: -len(kv[0])):
+            if model_key.startswith(k):
                 price = p
                 break
     if price:

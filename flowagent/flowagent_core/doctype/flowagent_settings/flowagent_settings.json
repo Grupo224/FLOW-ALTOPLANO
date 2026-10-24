@@ -58,7 +58,7 @@
   },
   {
    "default": "claude-sonnet-4-5",
-   "description": "Default Claude model used by AI nodes when none is specified on the node itself.",
+   "description": "Anthropic (legacy) default model. For other providers, set the model in the Providers table or use the per-provider default.",
    "fieldname": "default_model",
    "fieldtype": "Data",
    "label": "Default Model"

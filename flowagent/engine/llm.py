@@ -84,8 +84,17 @@ def _resolve_api_key(provider: str, row) -> str:
         import os
         return os.environ.get("ANTHROPIC_API_KEY", "")
 
-    # 3) env fallback for the rest
+    # 3) site_config + env fallback for the rest
     import os
+    conf_map = {
+        "OpenAI": "openai_api_key",
+        "DeepSeek": "deepseek_api_key",
+        "OpenRouter": "openrouter_api_key",
+        "Ollama": "ollama_api_key",
+    }
+    site_key = frappe.conf.get(conf_map.get(provider, ""))
+    if site_key:
+        return site_key
     env_map = {
         "OpenAI": "OPENAI_API_KEY",
         "DeepSeek": "DEEPSEEK_API_KEY",
@@ -99,7 +108,9 @@ def resolve_provider_config(provider: str | None = None) -> dict:
     """Resolve the effective provider configuration dict.
 
     Order: explicit provider arg -> Settings default_provider -> Anthropic.
-    Never returns the API key to callers.
+    The resolved API key is included under the private "_key" key for
+    internal use by :class:`UnifiedClient`. Treat this dict as secret:
+    never log or serialise it wholesale.
     """
     settings = get_settings()
     provider = provider or getattr(settings, "default_provider", None) or "Anthropic"

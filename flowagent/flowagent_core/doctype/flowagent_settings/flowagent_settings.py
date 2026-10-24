@@ -76,5 +76,11 @@ def get_anthropic_key() -> str:
 
 
 def get_default_model() -> str:
-    settings = frappe.get_single("FlowAgent Settings")
-    return settings.default_model or "claude-sonnet-4-5"
+    """Return the default model for the configured provider.
+
+    Delegates to the multi-provider engine so the result matches the
+    active provider (e.g. 'deepseek-chat' for DeepSeek) instead of
+    always falling back to a Claude model.
+    """
+    from flowagent.engine.llm import get_default_model as _engine_default_model
+    return _engine_default_model()

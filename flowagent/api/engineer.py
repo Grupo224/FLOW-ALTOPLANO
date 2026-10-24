@@ -4,10 +4,10 @@
 FlowAgent Engineer — an agentic workflow builder.
 
 The user describes what they want. The Engineer:
-  1. DESIGNS a workflow (Claude → JSON graph + a synthetic test payload)
+  1. DESIGNS a workflow (the LLM → JSON graph + a synthetic test payload)
   2. BUILDS it (saves as FlowAgent Workflow)
   3. TESTS it (dry-run against the test payload)
-  4. ANALYZES the outcome (Claude reads the run + steps, decides
+  4. ANALYZES the outcome (the LLM reads the run + steps, decides
      success / needs-fix / stuck)
   5. Loops back to step 1 with the failure context until success
      or max_iterations is reached.
@@ -310,10 +310,10 @@ def _run_loop(engineering_job_id: str) -> None:
             # ---------------- PHASE 1: DESIGN ----------------
             _update_job(job_id, phase=f"designing (iter {iter_num})")
             if iter_num == 1:
-                _append_log(job_id, "🎨 Designing initial workflow with Claude…", "info")
+                _append_log(job_id, "🎨 Designing initial workflow with the LLM…", "info")
             else:
                 _append_log(job_id,
-                            f"🔧 Refining workflow with Claude "
+                            f"🔧 Refining workflow with the LLM "
                             f"(fixing: {(prior_error or 'unknown')[:120]}…)",
                             "info")
             t0 = time.monotonic()
@@ -372,7 +372,7 @@ def _run_loop(engineering_job_id: str) -> None:
                 build_ms = int((time.monotonic() - t0) * 1000)
                 _append_log(job_id, f"❌ Save failed after {build_ms}ms: {type(e).__name__}: {e}", "error")
                 # Feed the build error back into the next iteration so
-                # Claude can fix the invalid graph.
+                # The LLM can fix the invalid graph.
                 prior_workflow = design
                 prior_error = f"Save rejected the workflow: {e}"
                 prior_run_summary = None
@@ -507,7 +507,7 @@ def _run_loop(engineering_job_id: str) -> None:
 
             # Build the refinement context for next iteration
             # ---------------------------------------------------
-            # We want Claude to see: the specific step that failed, its
+            # We want the LLM to see: the specific step that failed, its
             # error, its input. That's what unlocks a real fix vs a
             # regenerate-with-slight-tweaks.
             failing_step = None
@@ -565,12 +565,12 @@ def _finalize(job_id: str, final_status: str, reason: str,
 
 
 # ---------------------------------------------------------------------------
-# Design (Claude → JSON workflow + test payload)
+# Design (the LLM → JSON workflow + test payload)
 # ---------------------------------------------------------------------------
 def _design(goal: str, iteration: int, prior_workflow: dict | None,
             prior_error: str | None, prior_run_summary: dict | None,
             workflow_name_hint: str | None, job_id: str | None = None) -> dict:
-    """Ask Claude to design (or fix) the workflow.
+    """Ask the LLM to design (or fix) the workflow.
 
     Returns a dict shaped like:
         {
@@ -584,13 +584,13 @@ def _design(goal: str, iteration: int, prior_workflow: dict | None,
         }
 
     `job_id` is optional but recommended — when set, we emit heartbeat
-    logs during the Claude call so the user knows the API round-trip
+    logs during the LLM call so the user knows the API round-trip
     is in flight (not that the loop is stuck).
     """
     from .ai_build import SYSTEM_PROMPT, VALID_NODE_TYPES, _strip_fences
     from flowagent.engine.llm import UnifiedClient, get_default_model
 
-    model = get_default_model() or "claude-sonnet-4-5"
+    model = get_default_model()
     if job_id:
         _append_log(job_id, f"     • Model: {model}", "info")
 
@@ -660,7 +660,7 @@ def _design(goal: str, iteration: int, prior_workflow: dict | None,
         "design choices). All other rules from the base prompt apply."
     )
 
-    # Anthropic client with an EXPLICIT timeout. Without this, a hung
+    # LLM client with an EXPLICIT timeout. Without this, a hung
     # network connection would block the whole worker until Frappe's
     # 30-min RQ timeout fires — during which the modal shows the
     # design phase forever with no feedback.
@@ -673,7 +673,7 @@ def _design(goal: str, iteration: int, prior_workflow: dict | None,
     if job_id:
         _append_log(
             job_id,
-            f"     • Calling Anthropic API "
+            f"     • Calling {client.provider} API "
             f"(prompt: {len(user_msg)} chars, max_tokens: 6000)…",
             "info",
         )
@@ -692,22 +692,22 @@ def _design(goal: str, iteration: int, prior_workflow: dict | None,
         cls = type(e).__name__
         if "timeout" in str(e).lower() or "Timeout" in cls:
             raise RuntimeError(
-                f"Anthropic API timed out after {api_ms}ms. "
+                f"{client.provider} API timed out after {api_ms}ms. "
                 "Check the bench's outbound network access to "
-                "api.anthropic.com — a firewall / proxy is the usual cause."
+                "the provider's API endpoint — a firewall / proxy is the usual cause."
             ) from e
         if "401" in str(e) or "authentication" in str(e).lower():
             raise RuntimeError(
-                "Anthropic authentication failed. The API key in "
+                f"{client.provider} authentication failed. The API key in "
                 "FlowAgent Settings is invalid or revoked."
             ) from e
         if "404" in str(e) and "model" in str(e).lower():
             raise RuntimeError(
-                f"Anthropic doesn't recognise model '{model}'. Update the "
+                f"{client.provider} doesn't recognise model '{model}'. Update the "
                 "default model in FlowAgent Settings to a current one "
-                "(e.g. claude-sonnet-4-5)."
+                "for this provider."
             ) from e
-        raise RuntimeError(f"Anthropic API call failed after {api_ms}ms: {cls}: {e}") from e
+        raise RuntimeError(f"{client.provider} API call failed after {api_ms}ms: {cls}: {e}") from e
 
     api_ms = int((time.monotonic() - api_t0) * 1000)
     raw = "".join(
@@ -723,7 +723,7 @@ def _design(goal: str, iteration: int, prior_workflow: dict | None,
 
     if not raw:
         raise RuntimeError(
-            "Anthropic returned an empty response. This usually means "
+            f"{client.provider} returned an empty response. This usually means "
             "the model hit its output cap or safety filter. Try a "
             "shorter / simpler goal, or change the default model."
         )
@@ -959,7 +959,7 @@ def _summarize_run_for_feedback(run_summary: dict) -> dict:
 # Analyze (verdict: success / iterate / stuck)
 # ---------------------------------------------------------------------------
 def _analyze(goal: str, workflow: dict, run_summary: dict) -> dict:
-    """Ask Claude whether the run achieved the goal.
+    """Ask the LLM whether the run achieved the goal.
 
     Returns {success: bool, issue: str, reasoning: str}.
 
@@ -1004,7 +1004,7 @@ def _analyze(goal: str, workflow: dict, run_summary: dict) -> dict:
         raw = re.sub(r"\s*```\s*$", "", raw)
         verdict = json.loads(raw)
     except json.JSONDecodeError:
-        # If Claude returned prose, be conservative
+        # If the model returned prose, be conservative
         return {"success": False,
                 "issue": "Analysis output was not parseable JSON",
                 "reasoning": raw[:400]}
